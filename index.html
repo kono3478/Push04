@@ -405,7 +405,6 @@
                     return;
                 }
                 
-                // ★修正点: スコアに応じたブロック生成数の変更
                 let blocksToGenerate = 1;
                 if (score > 600) {
                     blocksToGenerate = 3;
@@ -469,46 +468,47 @@
 
         function deleteLinkedBlock() {
             if (gameState !== 'playing') return;
-            const directions = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+            // ★修正点: プレイヤーの向きだけをチェック
+            const directionMap = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+            const [dx, dy] = directionMap[player.direction];
+            
+            const targetX = player.x + dx;
+            const targetY = player.y + dy;
+
+            if (targetX < 0 || targetX >= GRID_SIZE || targetY < 0 || targetY >= GRID_SIZE) return;
+            
+            const targetBlock = gridState[targetY][targetX];
             const linkedGroups = findLinkedGroups();
-            for(const [dx, dy] of directions) {
-                const targetX = player.x + dx;
-                const targetY = player.y + dy;
-                if (targetX < 0 || targetX >= GRID_SIZE || targetY < 0 || targetY >= GRID_SIZE) continue;
+
+            if (targetBlock && targetBlock.type === 'block' && linkedGroups.has(targetBlock.groupId)) {
+                const groupIdToDelete = targetBlock.groupId;
+                let blocksInGroup = 0;
                 
-                const targetBlock = gridState[targetY][targetX];
-                if (targetBlock && targetBlock.type === 'block' && linkedGroups.has(targetBlock.groupId)) {
-                    const groupIdToDelete = targetBlock.groupId;
-                    let blocksInGroup = 0;
+                for(let y = 0; y < GRID_SIZE; y++) {
+                    for(let x = 0; x < GRID_SIZE; x++) {
+                        const b = gridState[y][x];
+                        if(b && b.type === 'block' && b.groupId === groupIdToDelete) {
+                            gridState[y][x] = null;
+                            blocksInGroup++;
+                        }
+                    }
+                }
+                if (blocksInGroup > 0) {
+                    if(deleteSynth) {
+                        const notes = ['C4', 'E4', 'G4', 'C5'];
+                        const notesToPlay = blocksInGroup > 1 ? notes.slice(0, Math.min(blocksInGroup, 4)) : ['C4'];
+                        deleteSynth.triggerAttackRelease(notesToPlay, '16n', Tone.now());
+                    }
                     
-                    for(let y = 0; y < GRID_SIZE; y++) {
-                        for(let x = 0; x < GRID_SIZE; x++) {
-                            const b = gridState[y][x];
-                            if(b && b.type === 'block' && b.groupId === groupIdToDelete) {
-                                gridState[y][x] = null;
-                                blocksInGroup++;
-                            }
-                        }
-                    }
-                    if (blocksInGroup > 0) {
-                        if(deleteSynth) {
-                            const notes = ['C4', 'E4', 'G4', 'C5'];
-                            const notesToPlay = blocksInGroup > 1 ? notes.slice(0, Math.min(blocksInGroup, 4)) : ['C4'];
-                            deleteSynth.triggerAttackRelease(notesToPlay, '16n', Tone.now());
-                        }
-                        
-                        addScore(Math.pow(blocksInGroup, 2));
+                    addScore(Math.pow(blocksInGroup, 2));
 
-                        // ★修正点: 10個以上消したらスペシャルアイテム追加
-                        if (blocksInGroup >= 10) {
-                            specialItems++;
-                            updateSpecialItemsDisplay();
-                        }
-
-                        fullRedraw();
-                        checkGameOver();
+                    if (blocksInGroup >= 10) {
+                        specialItems++;
+                        updateSpecialItemsDisplay();
                     }
-                    return;
+
+                    fullRedraw();
+                    checkGameOver();
                 }
             }
         }
