@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ブロック連結パズル (体力制)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', 'M PLUS Rounded 1c', sans-serif;
+            touch-action: manipulation;
+        }
+        .grid-container {
+            --grid-cols: 10;
+            display: grid;
+            grid-template-columns: repeat(var(--grid-cols), 1fr);
+            aspect-ratio: 1 / 1;
+            width: 95vw;
+            height: 95vw;
+            max-width: 600px;
+            max-height: 600px;
+        }
+        .grid-cell {
+            aspect-ratio: 1 / 1;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+            background-color: #e5e7eb; /* gray-200 */
+            border-radius: 0.125rem; /* rounded-sm */
+        }
+        .player {
+            font-size: 2.5vw;
+            color: #1e3a8a; /* blue-900 */
+            font-weight: 700;
+            z-index: 10;
+            transition: all 0.1s linear;
+        }
+        .block-inner {
+            width: 100%;
+            height: 100%;
+            transition: all 0.1s ease-in-out;
+            border-radius: 0.375rem; /* rounded-md */
+        }
+        .linked {
+            border: 3px solid #1f2937; /* gray-800 */
+        }
+        .overlay {
+            position: absolute;
+            inset: 0;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-radius: 0.5rem; /* rounded-lg */
+            transition: opacity 0.3s ease-in-out;
+            z-index: 20;
+        }
+        .danger-flash {
+            animation: flash 1s infinite;
+        }
+        @keyframes flash {
+            0%, 100% { box-shadow: inset 0 0 0 0 rgba(255, 0, 0, 0); }
+            50% { box-shadow: inset 0 0 40px 20px rgba(255, 0, 0, 0.5); }
+        }
+        .trapped-flash .block-inner {
+            animation: trapped-flash-anim 0.5s infinite alternate;
+        }
+        @keyframes trapped-flash-anim {
+            from { filter: brightness(1); }
+            to { filter: brightness(1.5) saturate(1.5); }
+        }
+        .special-attack-overlay {
+            position: absolute;
+            inset: 0;
+            background-color: white;
+            z-index: 30;
+            opacity: 0;
+            pointer-events: none;
+            animation: special-flash-anim 0.5s ease-out;
+        }
+        @keyframes special-flash-anim {
+            0% { opacity: 0.8; transform: scale(0.5); }
+            100% { opacity: 0; transform: scale(1.5); }
+        }
+        @media (min-width: 600px) {
+            .player { font-size: 24px; }
+            .linked { border-width: 4px; }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex flex-col items-center justify-center min-h-screen p-4 overflow-hidden">
+
+    <div id="game-container" class="hidden">
+        <div class="w-full max-w-lg mb-4">
+            <h1 class="text-2xl md:text-3xl font-bold text-gray-800 mb-2 text-center">ブロック連結パズル</h1>
+            <p class="text-gray-600 mb-4 text-center">矢印:移動, スペース:押す, 'a':消す, 's':必殺技, 'q':タイトルへ</p>
+            <div class="flex justify-between text-lg font-bold bg-white p-3 rounded-lg shadow-md mb-2">
+                <div>スコア: <span id="score" class="text-blue-600">0</span></div>
+                <div>ハイスコア: <span id="high-score" class="text-red-600">0</span></div>
+            </div>
+            <div class="flex justify-between text-2xl font-bold bg-slate-800 text-white p-2 rounded-lg shadow-inner">
+                <div>体力: <span id="health" class="text-lime-400">60</span></div>
+                <div>SPECIAL: <span id="special-items" class="text-cyan-300">0</span></div>
+            </div>
+        </div>
+
+        <div class="relative">
+            <div id="game-board" class="grid-container gap-1 bg-gray-400 p-2 rounded-lg shadow-lg">
+                <!-- JavaScriptによって空のセルがここに追加されます -->
+            </div>
+            <div id="game-over-modal" class="overlay hidden">
+                <h2 class="text-5xl font-extrabold text-white mb-4">GAME OVER</h2>
+                <button id="restart-button" class="mt-4 px-8 py-3 bg-yellow-400 text-gray-800 font-bold rounded-lg shadow-lg hover:bg-yellow-500 transition-transform transform hover:scale-105">もう一度プレイ</button>
+                <p class="text-white text-lg mt-6 animate-pulse">スペースキーでもう一度プレイ</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- タイトル画面 -->
+    <div id="title-screen" class="w-full max-w-2xl bg-white p-8 rounded-xl shadow-2xl text-center">
+        <h1 class="text-4xl md:text-5xl font-extrabold text-gray-800 mb-6">ブロック連結パズル</h1>
+        <div class="text-left text-gray-700 space-y-4 mb-8">
+            <h2 class="text-2xl font-bold text-center border-b-2 pb-2 mb-4">ルール</h2>
+            <p><strong class="text-blue-600">目的:</strong> 体力が尽きる前にブロックを消してハイスコアを目指そう！</p>
+            <p><strong class="text-blue-600">操作:</strong></p>
+            <ul class="list-disc list-inside ml-4 space-y-2">
+                <li><kbd class="px-2 py-1.5 text-xs font-semibold text-gray-800 bg-gray-100 border border-gray-200 rounded-lg">矢印キー</kbd> : キャラクターの移動（体力が1減少）</li>
+                <li><kbd class="px-2 py-1.5 text-xs font-semibold text-gray-800 bg-gray-100 border border-gray-200 rounded-lg">スペース</kbd> : 向いている方向のブロックを押す</li>
+                <li><kbd class="px-2 py-1.5 text-xs font-semibold text-gray-800 bg-gray-100 border border-gray-200 rounded-lg">Aキー</kbd> : 隣接する<strong class="text-red-600">連結ブロック</strong>を消す</li>
+                <li><kbd class="px-2 py-1.5 text-xs font-semibold text-gray-800 bg-gray-100 border border-gray-200 rounded-lg">Sキー</kbd> : <strong class="text-cyan-500">スペシャルアイテム</strong>を1つ消費し、必殺技を発動</li>
+                <li><kbd class="px-2 py-1.5 text-xs font-semibold text-gray-800 bg-gray-100 border border-gray-200 rounded-lg">Qキー</kbd> : タイトル画面に戻る</li>
+            </ul>
+            <p><strong class="text-blue-600">ブロック出現:</strong> 1歩歩くごとに出現（301点以上で2個、601点以上で3個に増加）。</p>
+            <p><strong class="text-blue-600">必殺技:</strong> 向いているブロックと同じ色のブロックを全て消去し、体力を回復します。</p>
+            <p><strong class="text-blue-600">スペシャルアイテム:</strong> 10個以上の連結ブロックを消すと1つ獲得できます。</p>
+        </div>
+        <button id="start-button" class="w-full px-8 py-4 bg-green-500 text-white font-bold text-2xl rounded-lg shadow-lg hover:bg-green-600 transition-transform transform hover:scale-105 animate-pulse">
+            スペースキーでスタート
+        </button>
+    </div>
+
+
+    <script>
+        // --- DOM要素と定数 ---
+        const gameContainer = document.getElementById('game-container');
+        const titleScreen = document.getElementById('title-screen');
+        const startButton = document.getElementById('start-button');
+        const gameBoard = document.getElementById('game-board');
+        const gameOverModal = document.getElementById('game-over-modal');
+        const restartButton = document.getElementById('restart-button');
+        const scoreEl = document.getElementById('score');
+        const highScoreEl = document.getElementById('high-score');
+        const healthEl = document.getElementById('health');
+        const specialItemsEl = document.getElementById('special-items');
+        const GRID_SIZE = 10;
+        const MOVE_INTERVAL = 150;
+        const INITIAL_HEALTH = 60;
+
+        const blockColors = ['bg-red-500', 'bg-blue-500', 'bg-yellow-400', 'bg-green-500'];
+        const directionSymbols = { up: '▲', down: '▼', left: '◀', right: '▶' };
+
+        // --- ゲームの状態管理 ---
+        let gameState = 'title'; // 'title', 'playing', 'gameOverPending', 'gameOver'
+        let player, gridState, activeMoveInterval, currentKeyDown, nextBlockId, score, highScore, health, highScoreBeaten, specialItems;
+        
+        // --- 効果音の管理 ---
+        let pushSynth, deleteSynth, fanfareSynth, specialSynth;
+        let audioInitialized = false;
+
+        // --- 1. ゲームの初期化・開始・終了 ---
+        function startGame() {
+            gameState = 'playing';
+            titleScreen.classList.add('hidden');
+            gameContainer.classList.remove('hidden');
+
+            player = { x: 4, y: 4, direction: 'down' };
+            gridState = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
+            nextBlockId = 1;
+            score = 0;
+            health = INITIAL_HEALTH;
+            highScore = localStorage.getItem('blockPuzzleHighScore') || 0;
+            highScoreBeaten = false;
+            specialItems = 3;
+
+            updateScoreDisplay();
+            updateHealthDisplay();
+            updateSpecialItemsDisplay();
+            
+            gameOverModal.classList.add('hidden');
+            
+            gridState[player.y][player.x] = { type: 'player' };
+            
+            const initialBlockCount = 40;
+            const emptyCells = [];
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    if (!gridState[y][x]) {
+                        emptyCells.push({ x, y });
+                    }
+                }
+            }
+
+            for (let i = emptyCells.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [emptyCells[i], emptyCells[j]] = [emptyCells[j], emptyCells[i]];
+            }
+
+            for (let i = 0; i < Math.min(initialBlockCount, emptyCells.length); i++) {
+                const cell = emptyCells[i];
+                const newBlockData = {
+                    type: 'block',
+                    color: blockColors[Math.floor(Math.random() * blockColors.length)],
+                    id: nextBlockId,
+                    groupId: nextBlockId
+                };
+                gridState[cell.y][cell.x] = newBlockData;
+                nextBlockId++;
+            }
+
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    const block = gridState[y][x];
+                    if (block && block.type === 'block') {
+                        mergeAdjacentGroups([{ x, y, block }]);
+                    }
+                }
+            }
+
+            fullRedraw();
+
+            clearInterval(activeMoveInterval);
+            currentKeyDown = null;
+        }
+
+        function returnToTitle() {
+            gameState = 'title';
+            clearInterval(activeMoveInterval);
+            document.body.classList.remove('danger-flash');
+            gameContainer.classList.add('hidden');
+            titleScreen.classList.remove('hidden');
+        }
+
+        // --- 2. 描画関連 ---
+        function createGridDOM() {
+            if (gameBoard.children.length === 0) {
+                for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'grid-cell';
+                    gameBoard.appendChild(cell);
+                }
+            }
+        }
+
+        function fullRedraw() {
+            const linkedGroups = findLinkedGroups();
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    const cellIndex = y * GRID_SIZE + x;
+                    const cell = gameBoard.children[cellIndex];
+                    if (!cell) continue;
+                    
+                    const cellData = gridState[y][x];
+                    cell.innerHTML = '';
+                    cell.classList.remove('trapped-flash');
+
+                    if (cellData) {
+                        if (cellData.type === 'player') {
+                            cell.innerHTML = `<div class="player">${directionSymbols[player.direction]}</div>`;
+                        } else if (cellData.type === 'block') {
+                            const blockDiv = document.createElement('div');
+                            blockDiv.className = `block-inner ${cellData.color}`;
+                            if (linkedGroups.has(cellData.groupId)) {
+                                blockDiv.classList.add('linked');
+                            }
+                            cell.appendChild(blockDiv);
+                        }
+                    }
+                }
+            }
+        }
+        
+        function findLinkedGroups() {
+            const groupCounts = new Map();
+            for(let y=0; y<GRID_SIZE; y++) {
+                for(let x=0; x<GRID_SIZE; x++) {
+                    const block = gridState[y][x];
+                    if(block && block.type === 'block') {
+                        groupCounts.set(block.groupId, (groupCounts.get(block.groupId) || 0) + 1);
+                    }
+                }
+            }
+            const linkedGroups = new Set();
+            for(const [groupId, count] of groupCounts.entries()) {
+                if(count > 1) linkedGroups.add(groupId);
+            }
+            return linkedGroups;
+        }
+
+        function updateScoreDisplay() {
+            scoreEl.textContent = score;
+            highScoreEl.textContent = highScore;
+        }
+
+        function updateHealthDisplay() {
+            healthEl.textContent = health;
+        }
+
+        function updateSpecialItemsDisplay() {
+            specialItemsEl.textContent = specialItems;
+        }
+
+        // --- 3. 体力、スコア、音の管理 ---
+        function initAudio() {
+            if (audioInitialized) return;
+            Tone.start();
+            pushSynth = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.01, decay: 0.1, sustain: 0, release: 0.1 } }).toDestination();
+            deleteSynth = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'sine' }, envelope: { attack: 0.01, decay: 0.5, sustain: 0, release: 0.4 } }).toDestination();
+            fanfareSynth = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'fatsawtooth' }, envelope: { attack: 0.01, decay: 0.8, sustain: 0.1, release: 0.4 } }).toDestination();
+            specialSynth = new Tone.MembraneSynth({ pitchDecay: 0.1, octaves: 10, oscillator: { type: 'sine' }, envelope: { attack: 0.001, decay: 0.8, sustain: 0.01, release: 1.4, attackCurve: 'exponential' } }).toDestination();
+            audioInitialized = true;
+        }
+
+        function addScore(points) {
+            const oldHighScore = highScore;
+            score += points;
+
+            if (score > oldHighScore) {
+                highScore = score;
+                localStorage.setItem('blockPuzzleHighScore', highScore);
+                if (!highScoreBeaten) {
+                    if (fanfareSynth) fanfareSynth.triggerAttackRelease(['C4', 'E4', 'G4', 'C5'], '8n', Tone.now());
+                    highScoreBeaten = true;
+                }
+            }
+            updateScoreDisplay();
+        }
+
+        function addHealth(amount) {
+            health += amount;
+            if (health > 20) {
+                 document.body.classList.remove('danger-flash');
+            }
+            updateHealthDisplay();
+        }
+
+        // --- 4. ブロック生成 ---
+        function generateBlock() {
+            if (gameState !== 'playing') return;
+            const emptyCells = [];
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    if (!gridState[y][x]) emptyCells.push({ x, y });
+                }
+            }
+            if (emptyCells.length === 0) {
+                checkGameOver();
+                return;
+            }
+            const randomCell = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+            const newBlockData = {
+                type: 'block',
+                color: blockColors[Math.floor(Math.random() * blockColors.length)],
+                id: nextBlockId,
+                groupId: nextBlockId
+            };
+            gridState[randomCell.y][randomCell.x] = newBlockData;
+            nextBlockId++;
+
+            const newBlockGroup = [{ x: randomCell.x, y: randomCell.y, block: newBlockData }];
+            mergeAdjacentGroups(newBlockGroup);
+        }
+
+        // --- 5. 操作ロジック ---
+        function movePlayer(dx, dy) {
+            if (gameState !== 'playing') return;
+            const oldX = player.x;
+            const oldY = player.y;
+            const newX = player.x + dx;
+            const newY = player.y + dy;
+
+            const cellIndex = oldY * GRID_SIZE + oldX;
+            const cell = gameBoard.children[cellIndex];
+            if(cell) cell.innerHTML = `<div class="player">${directionSymbols[player.direction]}</div>`;
+
+            if (newX >= 0 && newX < GRID_SIZE && newY >= 0 && newY < GRID_SIZE && !gridState[newY][newX]) {
+                gridState[oldY][oldX] = null;
+                player.x = newX;
+                player.y = newY;
+                gridState[newY][newX] = { type: 'player' };
+                
+                health--;
+                updateHealthDisplay();
+                if (health <= 20) {
+                    document.body.classList.add('danger-flash');
+                }
+                if (health <= 0) {
+                    health = 0;
+                    updateHealthDisplay();
+                    endGame();
+                    return;
+                }
+                
+                // ★修正点: スコアに応じたブロック生成数の変更
+                let blocksToGenerate = 1;
+                if (score > 600) {
+                    blocksToGenerate = 3;
+                } else if (score > 300) {
+                    blocksToGenerate = 2;
+                }
+                for (let i = 0; i < blocksToGenerate; i++) {
+                    generateBlock();
+                }
+
+                fullRedraw();
+                checkGameOver();
+            }
+        }
+        
+        function pushBlock() {
+            if (gameState !== 'playing') return;
+            const directions = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+            const [dx, dy] = directions[player.direction];
+            const targetX = player.x + dx;
+            const targetY = player.y + dy;
+            if (targetX < 0 || targetX >= GRID_SIZE || targetY < 0 || targetY >= GRID_SIZE) return;
+            const targetBlock = gridState[targetY][targetX];
+            if (!targetBlock || targetBlock.type !== 'block') return;
+
+            const groupToMove = getGroupMembers(targetX, targetY);
+            let steps = 0, canMove = true;
+            while(canMove) {
+                steps++;
+                for(const {x, y} of groupToMove) {
+                    const nextX = x + dx * steps;
+                    const nextY = y + dy * steps;
+                    if(nextX < 0 || nextX >= GRID_SIZE || nextY < 0 || nextY >= GRID_SIZE) {
+                        canMove = false; break;
+                    }
+                    const obstacle = gridState[nextY][nextX];
+                    if(obstacle && !groupToMove.some(m => m.x === nextX && m.y === nextY)) {
+                        canMove = false; break;
+                    }
+                }
+            }
+            const finalSteps = steps - 1;
+
+            if (finalSteps > 0) {
+                if (pushSynth) pushSynth.triggerAttackRelease('C3', '8n');
+                
+                for(const {x, y, block} of groupToMove) gridState[y][x] = null;
+                for(const {x, y, block} of groupToMove) {
+                    const newX = x + dx * finalSteps;
+                    const newY = y + dy * finalSteps;
+                    gridState[newY][newX] = block;
+                }
+                
+                const finalGroup = getGroupMembers(targetX + dx*finalSteps, targetY + dy*finalSteps);
+                mergeAdjacentGroups(finalGroup);
+            }
+            
+            fullRedraw();
+            checkGameOver();
+        }
+
+        function deleteLinkedBlock() {
+            if (gameState !== 'playing') return;
+            const directions = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+            const linkedGroups = findLinkedGroups();
+            for(const [dx, dy] of directions) {
+                const targetX = player.x + dx;
+                const targetY = player.y + dy;
+                if (targetX < 0 || targetX >= GRID_SIZE || targetY < 0 || targetY >= GRID_SIZE) continue;
+                
+                const targetBlock = gridState[targetY][targetX];
+                if (targetBlock && targetBlock.type === 'block' && linkedGroups.has(targetBlock.groupId)) {
+                    const groupIdToDelete = targetBlock.groupId;
+                    let blocksInGroup = 0;
+                    
+                    for(let y = 0; y < GRID_SIZE; y++) {
+                        for(let x = 0; x < GRID_SIZE; x++) {
+                            const b = gridState[y][x];
+                            if(b && b.type === 'block' && b.groupId === groupIdToDelete) {
+                                gridState[y][x] = null;
+                                blocksInGroup++;
+                            }
+                        }
+                    }
+                    if (blocksInGroup > 0) {
+                        if(deleteSynth) {
+                            const notes = ['C4', 'E4', 'G4', 'C5'];
+                            const notesToPlay = blocksInGroup > 1 ? notes.slice(0, Math.min(blocksInGroup, 4)) : ['C4'];
+                            deleteSynth.triggerAttackRelease(notesToPlay, '16n', Tone.now());
+                        }
+                        
+                        addScore(Math.pow(blocksInGroup, 2));
+
+                        // ★修正点: 10個以上消したらスペシャルアイテム追加
+                        if (blocksInGroup >= 10) {
+                            specialItems++;
+                            updateSpecialItemsDisplay();
+                        }
+
+                        fullRedraw();
+                        checkGameOver();
+                    }
+                    return;
+                }
+            }
+        }
+
+        function useSpecialAttack() {
+            if (gameState !== 'playing' || specialItems <= 0) return;
+
+            const directions = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+            const [dx, dy] = directions[player.direction];
+            const targetX = player.x + dx;
+            const targetY = player.y + dy;
+
+            if (targetX < 0 || targetX >= GRID_SIZE || targetY < 0 || targetY >= GRID_SIZE) return;
+            const targetBlock = gridState[targetY][targetX];
+            if (!targetBlock || targetBlock.type !== 'block') return;
+            
+            const targetColor = targetBlock.color;
+            specialItems--;
+            updateSpecialItemsDisplay();
+
+            if (specialSynth) specialSynth.triggerAttackRelease('C2', '1n');
+
+            const effectDiv = document.createElement('div');
+            effectDiv.className = 'special-attack-overlay';
+            document.body.appendChild(effectDiv);
+            setTimeout(() => effectDiv.remove(), 500);
+
+            let blocksCleared = 0;
+            for(let y = 0; y < GRID_SIZE; y++) {
+                for(let x = 0; x < GRID_SIZE; x++) {
+                    const b = gridState[y][x];
+                    if(b && b.type === 'block' && b.color === targetColor) {
+                        gridState[y][x] = null;
+                        blocksCleared++;
+                    }
+                }
+            }
+
+            if (blocksCleared > 0) {
+                // 必殺技ではスコアは加算しない
+                
+                addHealth(blocksCleared * 2);
+
+                fullRedraw();
+                checkGameOver();
+            }
+        }
+
+        // --- 6. ヘルパー関数とゲームオーバー ---
+        function getGroupMembers(startX, startY) {
+            const startBlock = gridState[startY] && gridState[startY][startX];
+            if (!startBlock || startBlock.type !== 'block') return [];
+            const groupMembers = [];
+            const visited = new Set();
+            const queue = [[startX, startY]];
+            visited.add(`${startX},${startY}`);
+            while(queue.length > 0) {
+                const [cx, cy] = queue.shift();
+                groupMembers.push({x: cx, y: cy, block: gridState[cy][cx]});
+                const neighbors = [[0,1], [0,-1], [1,0], [-1,0]];
+                for(const [ndx, ndy] of neighbors) {
+                    const nx = cx + ndx;
+                    const ny = cy + ndy;
+                    const nKey = `${nx},${ny}`;
+                    if(nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && !visited.has(nKey)) {
+                        const neighborBlock = gridState[ny][nx];
+                        if(neighborBlock && neighborBlock.type === 'block' && neighborBlock.groupId === startBlock.groupId) {
+                            visited.add(nKey);
+                            queue.push([nx, ny]);
+                        }
+                    }
+                }
+            }
+            return groupMembers;
+        }
+
+        function mergeAdjacentGroups(movedGroup) {
+            if (movedGroup.length === 0) return;
+            const mainGroupId = movedGroup[0].block.groupId;
+            const mainColor = movedGroup[0].block.color;
+            const groupsToMerge = new Set();
+            for (const {x,y} of movedGroup) {
+                const neighbors = [[0,1], [0,-1], [1,0], [-1,0]];
+                for (const [dx, dy] of neighbors) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if(nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+                        const neighborBlock = gridState[ny][nx];
+                        if(neighborBlock && neighborBlock.type === 'block' && neighborBlock.color === mainColor && neighborBlock.groupId !== mainGroupId) {
+                            groupsToMerge.add(neighborBlock.groupId);
+                        }
+                    }
+                }
+            }
+            if (groupsToMerge.size > 0) {
+                for(let y = 0; y < GRID_SIZE; y++) {
+                    for(let x = 0; x < GRID_SIZE; x++) {
+                        const b = gridState[y][x];
+                        if(b && b.type === 'block' && groupsToMerge.has(b.groupId)) {
+                            b.groupId = mainGroupId;
+                        }
+                    }
+                }
+            }
+        }
+
+        function checkGameOver() {
+            if (gameState !== 'playing') return;
+            const { x, y } = player;
+            const moves = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+
+            for (const [dx, dy] of moves) {
+                const newX = x + dx;
+                const newY = y + dy;
+                if (newX >= 0 && newX < GRID_SIZE && newY >= 0 && newY < GRID_SIZE && !gridState[newY][newX]) {
+                    return;
+                }
+            }
+
+            const linkedGroups = findLinkedGroups();
+            for (const [dx, dy] of moves) {
+                const newX = x + dx;
+                const newY = y + dy;
+                if (newX >= 0 && newX < GRID_SIZE && newY >= 0 && newY < GRID_SIZE) {
+                    const adjacentBlock = gridState[newY][newX];
+                    if (adjacentBlock && adjacentBlock.type === 'block' && linkedGroups.has(adjacentBlock.groupId)) {
+                        return;
+                    }
+                }
+            }
+            
+            initiateGameOverSequence();
+        }
+        
+        function initiateGameOverSequence() {
+            if (gameState !== 'playing') return;
+            gameState = 'gameOverPending';
+            
+            clearInterval(activeMoveInterval);
+
+            setTimeout(() => {
+                const { x, y } = player;
+                const moves = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+                moves.forEach(([dx, dy]) => {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+                        const cellIndex = ny * GRID_SIZE + nx;
+                        gameBoard.children[cellIndex].classList.add('trapped-flash');
+                    }
+                });
+
+                setTimeout(() => {
+                    endGame();
+                }, 2000);
+            }, 3000);
+        }
+
+        function endGame() {
+            if (gameState === 'gameOver') return;
+            gameState = 'gameOver';
+            clearInterval(activeMoveInterval);
+            document.body.classList.remove('danger-flash');
+            gameOverModal.classList.remove('hidden');
+        }
+
+        // --- 7. キー入力ハンドラ ---
+        document.addEventListener('keydown', (e) => {
+            initAudio();
+            
+            if (gameState === 'title' && e.code === 'Space') {
+                e.preventDefault();
+                startGame();
+                return;
+            }
+
+            if (gameState === 'gameOver' && e.code === 'Space') {
+                e.preventDefault();
+                startGame();
+                return;
+            }
+            
+            if ((gameState === 'playing' || gameState === 'gameOver') && (e.key === 'q' || e.key === 'Q')) {
+                e.preventDefault();
+                returnToTitle();
+                return;
+            }
+
+            if (gameState !== 'playing') return;
+            
+            if (e.key === 'a' || e.key === 'A') {
+                e.preventDefault();
+                deleteLinkedBlock();
+                return;
+            }
+            if (e.key === 's' || e.key === 'S') {
+                e.preventDefault();
+                useSpecialAttack();
+                return;
+            }
+            if (e.code === 'Space') {
+                e.preventDefault();
+                pushBlock();
+                return;
+            }
+            
+            if (e.key === currentKeyDown) return;
+            clearInterval(activeMoveInterval);
+            
+            const keyMap = { ArrowUp: [0, -1, 'up'], ArrowDown: [0, 1, 'down'], ArrowLeft: [-1, 0, 'left'], ArrowRight: [1, 0, 'right'] };
+            if (!keyMap[e.key]) return;
+            
+            const [dx, dy, dir] = keyMap[e.key];
+            player.direction = dir;
+            e.preventDefault();
+            currentKeyDown = e.key;
+            
+            movePlayer(dx, dy);
+            activeMoveInterval = setInterval(() => {
+                player.direction = dir;
+                movePlayer(dx, dy);
+            }, MOVE_INTERVAL);
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.key === currentKeyDown) {
+                clearInterval(activeMoveInterval);
+                currentKeyDown = null;
+            }
+        });
+
+        // --- 8. ボタンイベントリスナー ---
+        startButton.addEventListener('click', () => {
+             initAudio();
+             startGame();
+        });
+        restartButton.addEventListener('click', startGame);
+
+        // --- 初期化 ---
+        createGridDOM();
+
+    </script>
+</body>
+</html>
